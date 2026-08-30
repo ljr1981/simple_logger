@@ -51,12 +51,14 @@ feature {NONE} -- Initialization
 			io.put_string ("-----------------%N")
 			run_test (agent tests.test_json_output_format, "test_json_output_format")
 			run_test (agent tests.test_json_with_fields, "test_json_with_fields")
+			run_test (agent tests.test_json_metadata_is_reserved, "test_json_metadata_is_reserved")
 
 			-- Child Logger Tests
 			io.put_string ("%NChild Logger Tests%N")
 			io.put_string ("------------------%N")
 			run_test (agent tests.test_child_logger, "test_child_logger")
 			run_test (agent tests.test_child_with_convenience, "test_child_with_convenience")
+			run_test (agent tests.test_child_file_output, "test_child_file_output")
 			run_test (agent tests.test_context_propagation, "test_context_propagation")
 
 			-- Tracing Tests
@@ -71,18 +73,21 @@ feature {NONE} -- Initialization
 			run_test (agent tests.test_timer_elapsed, "test_timer_elapsed")
 			run_test (agent tests.test_log_duration, "test_log_duration")
 			run_test (agent tests.test_timer_formatted, "test_timer_formatted")
+			run_test (agent tests.test_timer_millisecond_resolution, "test_timer_millisecond_resolution")
 
 			-- File Output Tests
 			io.put_string ("%NFile Output Tests%N")
 			io.put_string ("-----------------%N")
 			run_test (agent tests.test_file_output, "test_file_output")
 			run_test (agent tests.test_add_file_output, "test_add_file_output")
+			run_test (agent tests.test_file_setup_failure, "test_file_setup_failure")
 
 			io.put_string ("%N===========================%N")
 			io.put_string ("Results: " + passed.out + " passed, " + failed.out + " failed%N")
 
 			if failed > 0 then
 				io.put_string ("TESTS FAILED%N")
+				(create {EXCEPTIONS}).die (1)
 			else
 				io.put_string ("ALL TESTS PASSED%N")
 			end
