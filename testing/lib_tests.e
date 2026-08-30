@@ -7,9 +7,6 @@ note
 class
 	LIB_TESTS
 
-inherit
-	TEST_SET_BASE
-
 feature -- Basic Tests
 
 	test_make_default
@@ -157,6 +154,32 @@ feature -- JSON Output Tests
 			check passed: True end
 		end
 
+	test_json_metadata_is_reserved
+			-- Test that structured fields cannot overwrite core JSON metadata.
+		local
+			log: SIMPLE_LOGGER
+			fields: HASH_TABLE [ANY, STRING]
+			test_file, contents: STRING
+		do
+			test_file := "test_json_metadata.log"
+			delete_test_file (test_file)
+			create log.make_to_file (test_file)
+			log.set_json_output (True)
+			create fields.make (4)
+			fields.put ("forged_timestamp", "timestamp")
+			fields.put ("forged_level", "level")
+			fields.put ("forged_message", "message")
+			fields.put ("kept", "custom")
+			log.info_with ("real message", fields)
+			contents := read_test_file (test_file)
+			assert ("real_message_preserved", contents.has_substring ("real message"))
+			assert ("iso8601_timestamp", contents.has_substring ("T") and contents.has_substring ("Z"))
+			assert ("level_preserved", contents.has_substring ("%"level%":%"info%""))
+			assert ("custom_field_preserved", contents.has_substring ("kept"))
+			assert ("metadata_not_forged", not contents.has_substring ("forged_"))
+			delete_test_file (test_file)
+		end
+
 feature -- Child Logger Tests
 
 	test_child_logger
@@ -183,6 +206,23 @@ feature -- Child Logger Tests
 			create log.make
 			request_log := log.child_with ("trace_id", "abc-123")
 			check has_trace_id: request_log.context_fields.has ("trace_id") end
+		end
+
+	test_child_file_output
+			-- Test child logger output reaches the parent's file destination.
+		local
+			parent_log, child_log: SIMPLE_LOGGER
+			test_file, contents: STRING
+		do
+			test_file := "test_child_output.log"
+			delete_test_file (test_file)
+			create parent_log.make_to_file (test_file)
+			child_log := parent_log.child_with ("request_id", "request-456")
+			child_log.info ("Message from file child")
+			contents := read_test_file (test_file)
+			assert ("child_message_written", contents.has_substring ("Message from file child"))
+			assert ("child_context_written", contents.has_substring ("request_id=request-456"))
+			delete_test_file (test_file)
 		end
 
 	test_context_propagation
@@ -267,6 +307,22 @@ feature -- Timer Tests
 			check formatted_not_empty: not timer.elapsed_formatted.is_empty end
 		end
 
+	test_timer_millisecond_resolution
+			-- Test elapsed time has sub-second resolution and reset remains valid.
+		local
+			timer: SIMPLE_LOG_TIMER
+			l_environment: EXECUTION_ENVIRONMENT
+			elapsed: INTEGER_64
+		do
+			create timer.make
+			create l_environment
+			l_environment.sleep (20_000_000)
+			elapsed := timer.elapsed_ms
+			assert ("millisecond_resolution", elapsed > 0)
+			timer.reset
+			assert ("reset_non_negative", timer.elapsed_ms >= 0)
+		end
+
 feature -- File Output Tests
 
 	test_file_output
@@ -276,10 +332,11 @@ feature -- File Output Tests
 			test_file: STRING
 		do
 			test_file := "test_logger_output.log"
+			delete_test_file (test_file)
 			create log.make_to_file (test_file)
 			log.info ("Test file output")
 			check file_output_enabled: log.is_file_output end
-			-- Clean up
+			assert ("message_written", read_test_file (test_file).has_substring ("Test file output"))
 			delete_test_file (test_file)
 		end
 
@@ -290,31 +347,100 @@ feature -- File Output Tests
 			test_file: STRING
 		do
 			test_file := "test_added_output.log"
+			delete_test_file (test_file)
 			create log.make
 			log.add_file_output (test_file)
 			check file_output_enabled: log.is_file_output end
 			log.info ("Test added file output")
-			-- Clean up
+			assert ("message_written", read_test_file (test_file).has_substring ("Test added file output"))
 			delete_test_file (test_file)
 		end
 
+	test_file_setup_failure
+			-- Test file setup errors propagate without disabling a working logger.
+		local
+			log: SIMPLE_LOGGER
+		do
+			assert ("constructor_failure_propagated", file_logger_creation_fails ("."))
+			create log.make
+			assert ("add_failure_propagated", add_file_output_fails (log, "."))
+			assert ("file_output_unchanged", not log.is_file_output)
+			assert ("console_output_retained", log.is_console_output)
+		end
+
 feature {NONE} -- Test Utilities
+
+	assert (a_tag: STRING; a_condition: BOOLEAN)
+			-- Raise a test failure identified by `a_tag` unless `a_condition` holds.
+		do
+			if not a_condition then
+				(create {EXCEPTIONS}).raise ("Assertion failed: " + a_tag)
+			end
+		end
+
+	read_test_file (a_path: STRING): STRING
+			-- Contents of test file at `a_path`.
+		local
+			l_file: detachable PLAIN_TEXT_FILE
+		do
+			create Result.make_empty
+			create l_file.make_open_read (a_path)
+			if l_file.is_open_read then
+				if l_file.count > 0 then
+					l_file.read_stream (l_file.count)
+					Result.append (l_file.last_string)
+				end
+				l_file.close
+			else
+				(create {EXCEPTIONS}).raise ("Unable to read test file: " + a_path)
+			end
+		rescue
+			if attached l_file as f and then f.is_open_read then
+				f.close
+			end
+		end
+
+	file_logger_creation_fails (a_path: STRING): BOOLEAN
+			-- Does creating a file-only logger at `a_path` raise an exception?
+		local
+			log: detachable SIMPLE_LOGGER
+			l_attempted: BOOLEAN
+		do
+			if not l_attempted then
+				l_attempted := True
+				create log.make_to_file (a_path)
+			end
+		rescue
+			Result := True
+			retry
+		end
+
+	add_file_output_fails (a_logger: SIMPLE_LOGGER; a_path: STRING): BOOLEAN
+			-- Does adding file output at `a_path` raise an exception?
+		local
+			l_attempted: BOOLEAN
+		do
+			if not l_attempted then
+				l_attempted := True
+				a_logger.add_file_output (a_path)
+			end
+		rescue
+			Result := True
+			retry
+		end
 
 	delete_test_file (a_path: STRING)
 			-- Delete test file if it exists.
 		local
 			l_file: RAW_FILE
-			l_retried: BOOLEAN
 		do
-			if not l_retried then
-				create l_file.make_with_name (a_path)
-				if l_file.exists then
-					l_file.delete
-				end
+			create l_file.make_with_name (a_path)
+			if l_file.exists then
+				l_file.delete
+				assert ("file_deleted", not l_file.exists)
 			end
 		rescue
-			l_retried := True
-			retry
+			assert ("delete_test_file failed: " + a_path, False)
 		end
 
 end

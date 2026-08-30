@@ -6,11 +6,11 @@
 
 **[Documentation](https://simple-eiffel.github.io/simple_logger/)** | **[GitHub](https://github.com/simple-eiffel/simple_logger)**
 
-Enhanced logging facade for Eiffel with structured fields and JSON output. Wraps EiffelStudio's logging library with a cleaner API.
+Enhanced logging facade for Eiffel with structured fields and JSON output.
 
 ## Overview
 
-`simple_logger` provides a `SIMPLE_LOGGER` class that enhances Eiffel's `LOG_LOGGING_FACILITY` with:
+`simple_logger` provides a standalone `SIMPLE_LOGGER` class with:
 
 - **Structured logging** - Key-value fields in log entries
 - **JSON output** - Machine-parseable format for log aggregation
@@ -30,9 +30,13 @@ Enhanced logging facade for Eiffel with structured fields and JSON output. Wraps
 
 ## Dependencies
 
-| Library | Purpose | Environment Variable |
-|---------|---------|---------------------|
-| [simple_json](https://github.com/simple-eiffel/simple_json) | JSON output format | `$SIMPLE_JSON` |
+Simple Eiffel repositories are resolved beneath `$SIMPLE_EIFFEL`; EiffelTime and Eiffel JSON ship with EiffelStudio.
+
+| Library | Purpose | Required by |
+|---------|---------|-------------|
+| EiffelTime | Log timestamps and timer start time | Library |
+| Eiffel JSON | JSON output format and escaping | Library |
+| [simple_mml](https://github.com/simple-eiffel/simple_mml) | Contract models | Library |
 
 ## Quick Start
 
@@ -74,6 +78,8 @@ end
 ```
 
 ## JSON Output
+
+The keys `timestamp`, `level`, and `message` are reserved. Context and per-message fields with those names are ignored so they cannot replace core log metadata.
 
 ```eiffel
 local
@@ -161,6 +167,8 @@ do
 end
 ```
 
+File destinations are validated when configured. Open or write failures raise an exception instead of silently dropping messages, and each write closes its file handle before returning.
+
 ## Log Levels
 
 | Level | Constant | Use Case |
@@ -200,9 +208,9 @@ end
 - `start_timer` - Create timer
 - `log_duration (timer, message)` - Log with elapsed time
 
-## Integration with Eiffel Logging
+## Output Behavior
 
-`simple_logger` uses `LOG_LOGGING_FACILITY` internally, so it's compatible with existing Eiffel logging infrastructure. You get the enhanced API while keeping compatibility with the standard library.
+`simple_logger` writes console entries through standard output and file entries directly to the configured path. It does not register writers with `LOG_LOGGING_FACILITY`.
 
 ## License
 

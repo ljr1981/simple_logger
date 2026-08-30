@@ -20,7 +20,8 @@ PROJECT_NAME=$(basename "$SCRIPT_DIR")
 PROJECT_UPPER=$(echo "$PROJECT_NAME" | tr '[:lower:]' '[:upper:]')
 
 # EiffelStudio paths
-EC_EXE="/c/Program Files/Eiffel Software/EiffelStudio 25.02 Standard/studio/spec/win64/bin/ec.exe"
+EC_EXE="${EC_EXE:-/mnt/c/El2502E/studio/spec/win64/bin/ec.exe}"
+FINISH_FREEZING="$(dirname "$EC_EXE")/finish_freezing.exe"
 
 # Colors
 RED='\033[0;31m'
@@ -75,6 +76,17 @@ if [ -z "$ECF" ] || [ ! -f "$ECF" ]; then
     exit 1
 fi
 
+if [ ! -f "$EC_EXE" ]; then
+    echo -e "${RED}ERROR: Eiffel compiler not found at $EC_EXE${NC}"
+    exit 1
+fi
+
+# Windows executables launched from WSL need Windows-formatted file arguments.
+ECF_FOR_COMPILER="$ECF"
+if [[ "$EC_EXE" == *.exe ]] && command -v wslpath >/dev/null 2>&1; then
+    ECF_FOR_COMPILER=$(wslpath -w "$ECF")
+fi
+
 # Find test target
 TEST_TARGET="${PROJECT_NAME}_tests"
 if ! grep -q "target name=\"$TEST_TARGET\"" "$ECF" 2>/dev/null; then
@@ -90,12 +102,34 @@ if [ -z "$TEST_TARGET" ]; then
     fi
 fi
 
+BUILD_TARGET="${TEST_TARGET:-$PROJECT_NAME}"
+
+finish_native_build() {
+    local target="$1"
+    local code_dir="$SCRIPT_DIR/EIFGENs/$target/W_code"
+
+    if [ ! -f "$FINISH_FREEZING" ]; then
+        echo -e "${RED}ERROR: finish_freezing not found at $FINISH_FREEZING${NC}"
+        return 1
+    fi
+    if [ ! -d "$code_dir" ]; then
+        echo -e "${RED}ERROR: Generated C directory not found at $code_dir${NC}"
+        return 1
+    fi
+
+    pushd "$code_dir" >/dev/null || return 1
+    "$FINISH_FREEZING" 2>&1
+    local result=$?
+    popd >/dev/null || return 1
+    return $result
+}
+
 cd "$SCRIPT_DIR"
 
 case $MODE in
     compile)
         echo -e "${BLUE}Freeze compiling...${NC}"
-        "$EC_EXE" -batch -config "$ECF" -target "$TEST_TARGET" -freeze 2>&1
+        "$EC_EXE" -batch -config "$ECF_FOR_COMPILER" -target "$BUILD_TARGET" -freeze 2>&1
         if [ $? -eq 0 ]; then
             echo -e "${GREEN}Freeze compile successful${NC}"
         else
@@ -106,7 +140,7 @@ case $MODE in
     
     finalize)
         echo -e "${BLUE}Finalizing (C compile)...${NC}"
-        "$EC_EXE" -batch -config "$ECF" -target "$TEST_TARGET" -c_compile 2>&1
+        finish_native_build "$BUILD_TARGET"
         if [ $? -eq 0 ]; then
             echo -e "${GREEN}Finalize successful${NC}"
         else
@@ -118,10 +152,16 @@ case $MODE in
     test)
         echo -e "${BLUE}Compiling and running tests...${NC}"
         
-        # Full compile (freeze + C compile)
-        "$EC_EXE" -batch -config "$ECF" -target "$TEST_TARGET" -c_compile 2>&1
+        # Compile Eiffel changes to C, then link the generated workbench code.
+        "$EC_EXE" -batch -config "$ECF_FOR_COMPILER" -target "$TEST_TARGET" -freeze 2>&1
         if [ $? -ne 0 ]; then
-            echo -e "${RED}Compilation failed${NC}"
+            echo -e "${RED}Eiffel compilation failed${NC}"
+            exit 1
+        fi
+
+        finish_native_build "$TEST_TARGET"
+        if [ $? -ne 0 ]; then
+            echo -e "${RED}Native compilation failed${NC}"
             exit 1
         fi
         
@@ -133,6 +173,12 @@ case $MODE in
         fi
         
         if [ -f "$EXE_PATH" ]; then
+            STALE_INPUT=$(find "$SCRIPT_DIR/src" "$SCRIPT_DIR/testing" "$ECF" -type f -newer "$EXE_PATH" -print -quit 2>/dev/null)
+            if [ -n "$STALE_INPUT" ]; then
+                echo -e "${RED}ERROR: Test executable is stale; newer input: $STALE_INPUT${NC}"
+                exit 1
+            fi
+
             echo -e "${BLUE}Running tests...${NC}"
             "$EXE_PATH"
             TEST_RESULT=$?

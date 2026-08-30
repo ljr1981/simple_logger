@@ -2,9 +2,9 @@ note
 	description: "[
 		Simple Logger - Enhanced logging facade with structured fields and JSON output.
 
-		Wraps Eiffel's LOG_LOGGING_FACILITY with a cleaner API and adds:
+		Provides a small logging API with:
 		- Structured key-value fields
-		- JSON output format (via simple_json)
+		- JSON output format (via Eiffel's JSON library)
 		- Enter/exit tracing with indentation
 		- Child loggers with inherited context
 		- Duration/timer logging
@@ -57,8 +57,6 @@ feature {NONE} -- Initialization
 			is_console_output := True
 			is_json_output := False
 			create context_fields.make (5)
-			create eiffel_facility.make
-			setup_console_writer
 		ensure
 			level_is_info: level = Level_info
 			outputs_to_console: is_console_output
@@ -83,10 +81,10 @@ feature {NONE} -- Initialization
 			path_not_empty: not a_path.is_empty
 		do
 			make
+			validate_file_output (a_path)
+			file_path := a_path.twin
 			is_console_output := False
 			is_file_output := True
-			file_path := a_path
-			setup_file_writer (a_path)
 		ensure
 			outputs_to_file: is_file_output
 			file_path_set: attached file_path as fp and then fp.same_string (a_path)
@@ -102,8 +100,9 @@ feature {NONE} -- Initialization
 			is_console_output := a_parent.is_console_output
 			is_file_output := a_parent.is_file_output
 			is_json_output := a_parent.is_json_output
-			file_path := a_parent.file_path
-			eiffel_facility := a_parent.eiffel_facility
+			if attached a_parent.file_path as l_parent_path then
+				file_path := l_parent_path.twin
+			end
 			-- Merge parent context with new context (child overrides parent)
 			create context_fields.make (a_parent.context_fields.count + a_context.count)
 			from
@@ -132,6 +131,8 @@ feature {NONE} -- Initialization
 			inherits_level: level = a_parent.level
 			inherits_console: is_console_output = a_parent.is_console_output
 			inherits_file: is_file_output = a_parent.is_file_output
+			inherits_file_path: is_file_output implies
+				(attached file_path as fp and then attached a_parent.file_path as parent_fp and then fp.same_string (parent_fp))
 			inherits_json: is_json_output = a_parent.is_json_output
 			-- Model-based: result is parent context overridden by child context
 			context_is_override: model_context |=| (a_parent.model_context + hash_to_model (a_context))
@@ -252,11 +253,12 @@ feature -- Configuration
 		require
 			path_not_empty: not a_path.is_empty
 		do
+			validate_file_output (a_path)
+			file_path := a_path.twin
 			is_file_output := True
-			file_path := a_path
-			setup_file_writer (a_path)
 		ensure
 			file_output_enabled: is_file_output
+			file_path_set: attached file_path as fp and then fp.same_string (a_path)
 		end
 
 feature -- Logging (Simple)
@@ -370,6 +372,7 @@ feature -- Child Loggers
 		ensure
 			inherits_level: Result.level = level
 			inherits_console: Result.is_console_output = is_console_output
+			inherits_file: Result.is_file_output = is_file_output
 			inherits_json: Result.is_json_output = is_json_output
 			-- Model-based: child context is parent overridden by new context
 			child_context_is_override: Result.model_context |=| (model_context + hash_to_model (a_context))
@@ -439,44 +442,26 @@ feature -- Timing
 
 feature {SIMPLE_LOGGER} -- Implementation (shared with child loggers)
 
-	eiffel_facility: LOG_LOGGING_FACILITY
-			-- Underlying Eiffel logging facility.
-
-	console_writer: detachable LOG_WRITER_FILE
-			-- Console output writer.
-
-	file_writer: detachable LOG_WRITER_FILE
-			-- File output writer.
-
 	indent_level: INTEGER
 			-- Current indentation level for tracing.
 
-	setup_console_writer
-			-- Set up console output writer.
-		do
-			-- Use stdout via Eiffel facility
-			-- Note: LOG_LOGGING_FACILITY writes to registered writers
-		end
-
-	setup_file_writer (a_path: STRING)
-			-- Set up file output writer.
+	validate_file_output (a_path: STRING)
+			-- Ensure `a_path` can be opened for append without retaining a file handle.
 		require
 			path_not_empty: not a_path.is_empty
 		local
-			l_writer: LOG_WRITER_FILE
-			l_path: PATH
-			l_retried: BOOLEAN
+			l_file: detachable PLAIN_TEXT_FILE
 		do
-			if not l_retried then
-				create l_path.make_from_string (a_path)
-				create l_writer.make_at_location (l_path)
-				l_writer.enable_debug_log_level
-				eiffel_facility.register_log_writer (l_writer)
-				file_writer := l_writer
+			create l_file.make_open_append (a_path)
+			if l_file.is_open_write then
+				l_file.close
+			else
+				(create {EXCEPTIONS}).raise ("Unable to open log file: " + a_path)
 			end
 		rescue
-			l_retried := True
-			retry
+			if attached l_file as f and then f.is_open_write then
+				f.close
+			end
 		end
 
 	log_at_level (a_level: INTEGER; a_message: STRING; a_fields: detachable HASH_TABLE [ANY, STRING])
@@ -525,8 +510,8 @@ feature {SIMPLE_LOGGER} -- Implementation (shared with child loggers)
 					io.output.flush
 				end
 
-				-- Output to file via Eiffel facility
-				if is_file_output and attached file_writer then
+				-- Open, append, and close each write so no persistent file lock is retained.
+				if is_file_output then
 					write_to_file (l_output)
 				end
 			end
@@ -535,14 +520,12 @@ feature {SIMPLE_LOGGER} -- Implementation (shared with child loggers)
 	format_plain (a_level: INTEGER; a_message: STRING; a_fields: HASH_TABLE [ANY, STRING]): STRING
 			-- Format log entry as plain text.
 		local
-			l_time: SIMPLE_DATE_TIME
 			i: INTEGER
 		do
 			create Result.make (200)
 
 			-- Timestamp
-			create l_time.make_now
-			Result.append (l_time.to_iso8601)
+			Result.append (current_iso8601 (False))
 			Result.append (" ")
 
 			-- Level
@@ -582,55 +565,81 @@ feature {SIMPLE_LOGGER} -- Implementation (shared with child loggers)
 		end
 
 	format_json (a_level: INTEGER; a_message: STRING; a_fields: HASH_TABLE [ANY, STRING]): STRING
-			-- Format log entry as JSON using SIMPLE_JSON_OBJECT fluent builder.
-			-- Leverages simple_json for proper escaping and type handling.
+			-- Format log entry as JSON using Eiffel's JSON value classes.
 		local
-			l_time: SIMPLE_DATE_TIME
-			l_json: SIMPLE_JSON_OBJECT
-			l_timestamp: STRING
+			l_json: JSON_OBJECT
+			l_key: JSON_STRING
 		do
 			create l_json.make
 
-			-- Timestamp (ISO 8601)
-			create l_time.make_now
-			l_timestamp := l_time.to_iso8601_utc
+			create l_key.make_from_string ("timestamp")
+			l_json.put_string (current_iso8601 (True), l_key)
+			create l_key.make_from_string ("level")
+			l_json.put_string (level_name (a_level).as_lower, l_key)
+			create l_key.make_from_string ("message")
+			l_json.put_string (a_message, l_key)
 
-			-- Build JSON using fluent API - chain calls, handles all escaping automatically
-			l_json := l_json.put_string (l_timestamp, "timestamp")
-			l_json := l_json.put_string (level_name (a_level).as_lower, "level")
-			l_json := l_json.put_string (a_message, "message")
-
-			-- Add all fields with proper type handling
+			-- Add fields with proper type handling. Core metadata is reserved.
 			from
 				a_fields.start
 			until
 				a_fields.off
 			loop
-				if attached {STRING} a_fields.item_for_iteration as s then
-					l_json := l_json.put_string (s, a_fields.key_for_iteration)
-				elseif attached {STRING_32} a_fields.item_for_iteration as s32 then
-					l_json := l_json.put_string (s32, a_fields.key_for_iteration)
-				elseif attached {INTEGER} a_fields.item_for_iteration as i then
-					l_json := l_json.put_integer (i.to_integer_64, a_fields.key_for_iteration)
-				elseif attached {INTEGER_64} a_fields.item_for_iteration as i64 then
-					l_json := l_json.put_integer (i64, a_fields.key_for_iteration)
-				elseif attached {REAL_64} a_fields.item_for_iteration as r then
-					l_json := l_json.put_real (r, a_fields.key_for_iteration)
-				elseif attached {REAL_32} a_fields.item_for_iteration as r32 then
-					l_json := l_json.put_real (r32.to_double, a_fields.key_for_iteration)
-				elseif attached {BOOLEAN} a_fields.item_for_iteration as b then
-					l_json := l_json.put_boolean (b, a_fields.key_for_iteration)
-				else
-					-- Fall back to string representation for other types
-					l_json := l_json.put_string (a_fields.item_for_iteration.out, a_fields.key_for_iteration)
+				if not is_reserved_json_field (a_fields.key_for_iteration) then
+					create l_key.make_from_string (a_fields.key_for_iteration)
+					if attached {STRING} a_fields.item_for_iteration as s then
+						l_json.put_string (s, l_key)
+					elseif attached {STRING_32} a_fields.item_for_iteration as s32 then
+						l_json.put_string (s32, l_key)
+					elseif attached {INTEGER} a_fields.item_for_iteration as i then
+						l_json.put_integer (i.to_integer_64, l_key)
+					elseif attached {INTEGER_64} a_fields.item_for_iteration as i64 then
+						l_json.put_integer (i64, l_key)
+					elseif attached {REAL_64} a_fields.item_for_iteration as r then
+						l_json.put_real (r, l_key)
+					elseif attached {REAL_32} a_fields.item_for_iteration as r32 then
+						l_json.put_real (r32.to_double, l_key)
+					elseif attached {BOOLEAN} a_fields.item_for_iteration as b then
+						l_json.put_boolean (b, l_key)
+					else
+						l_json.put_string (a_fields.item_for_iteration.out, l_key)
+					end
 				end
 				a_fields.forth
 			end
 
-			Result := l_json.as_json
+			Result := l_json.representation
 		ensure
 			not_empty: not Result.is_empty
 			valid_json: Result.starts_with ("{")
+		end
+
+	is_reserved_json_field (a_key: STRING): BOOLEAN
+			-- Is `a_key` owned by the logger's JSON envelope?
+		do
+			Result := a_key.same_string ("timestamp") or else
+				a_key.same_string ("level") or else
+				a_key.same_string ("message")
+		end
+
+	current_iso8601 (a_utc: BOOLEAN): STRING
+			-- Current local or UTC time in ISO 8601 format.
+		local
+			l_time: DATE_TIME
+		do
+			if a_utc then
+				create l_time.make_now_utc
+			else
+				create l_time.make_now
+			end
+			Result := l_time.date.formatted_out ("yyyy-[0]mm-[0]dd")
+			Result.append_character ('T')
+			Result.append (l_time.time.formatted_out ("[0]hh:[0]mi:[0]ss"))
+			if a_utc then
+				Result.append_character ('Z')
+			end
+		ensure
+			not_empty: not Result.is_empty
 		end
 
 	level_name (a_level: INTEGER): STRING
@@ -656,21 +665,25 @@ feature {SIMPLE_LOGGER} -- Implementation (shared with child loggers)
 	write_to_file (a_message: STRING)
 			-- Write message to log file.
 		local
-			l_file: PLAIN_TEXT_FILE
-			l_retried: BOOLEAN
+			l_file: detachable PLAIN_TEXT_FILE
 		do
-			if not l_retried and then attached file_path as fp then
+			if attached file_path as fp then
 				create l_file.make_open_append (fp)
 				if l_file.is_open_write then
 					l_file.put_string (a_message)
 					l_file.put_new_line
 					l_file.flush
 					l_file.close
+				else
+					(create {EXCEPTIONS}).raise ("Unable to open log file: " + fp)
 				end
+			else
+				(create {EXCEPTIONS}).raise ("File output is enabled without a path")
 			end
 		rescue
-			l_retried := True
-			retry
+			if attached l_file as f and then f.is_open_write then
+				f.close
+			end
 		end
 
 
@@ -728,7 +741,7 @@ invariant
 
 	-- Structural invariants (void-safety makes these redundant but explicit)
 	context_exists: attached context_fields
-	facility_exists: attached eiffel_facility
+	file_output_has_path: is_file_output implies attached file_path
 
 	-- Indent level must be non-negative
 	non_negative_indent: indent_level >= 0
