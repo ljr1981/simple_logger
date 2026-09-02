@@ -263,46 +263,46 @@ feature -- Logging (Simple)
 
 	debug_log,
 	trace,
-	verbose (a_message: STRING)
+	verbose (a_message: READABLE_STRING_GENERAL)
 			-- Log debug message.
 			-- (void-safe: a_message attachment guaranteed by type system)
 		do
-			log_at_level (Level_debug, a_message, Void)
+			log_at_level (Level_debug, a_message.out, Void)
 		end
 
 	info,
 	log,
 	log_info,
-	message (a_message: STRING)
+	message (a_message: READABLE_STRING_GENERAL)
 			-- Log info message.
 			-- (void-safe: a_message attachment guaranteed by type system)
 		do
-			log_at_level (Level_info, a_message, Void)
+			log_at_level (Level_info, a_message.out, Void)
 		end
 
 	warn,
 	warning,
-	log_warn (a_message: STRING)
+	log_warn (a_message: READABLE_STRING_GENERAL)
 			-- Log warning message.
 			-- (void-safe: a_message attachment guaranteed by type system)
 		do
-			log_at_level (Level_warn, a_message, Void)
+			log_at_level (Level_warn, a_message.out, Void)
 		end
 
 	error,
 	log_error,
-	err (a_message: STRING)
+	err (a_message: READABLE_STRING_GENERAL)
 			-- Log error message.
 			-- (void-safe: a_message attachment guaranteed by type system)
 		do
-			log_at_level (Level_error, a_message, Void)
+			log_at_level (Level_error, a_message.out, Void)
 		end
 
-	fatal (a_message: STRING)
+	fatal (a_message: READABLE_STRING_GENERAL)
 			-- Log fatal message.
 			-- (void-safe: a_message attachment guaranteed by type system)
 		do
-			log_at_level (Level_fatal, a_message, Void)
+			log_at_level (Level_fatal, a_message.out, Void)
 		end
 
 feature -- Logging (Structured with HASH_TABLE)
@@ -389,7 +389,7 @@ feature -- Child Loggers
 
 feature -- Tracing (Enter/Exit)
 
-	enter (a_feature_name: STRING)
+	enter (a_feature_name: READABLE_STRING_GENERAL)
 			-- Log entering a feature (for call tracing).
 		require
 			feature_name_not_empty: not a_feature_name.is_empty
@@ -398,11 +398,11 @@ feature -- Tracing (Enter/Exit)
 		do
 			create l_fields.make (1)
 			l_fields.put ("enter", "trace")
-			log_at_level (Level_debug, ">>> " + a_feature_name, l_fields)
+			log_at_level (Level_debug, ">>> " + a_feature_name.out, l_fields)
 			increment_indent
 		end
 
-	exit (a_feature_name: STRING)
+	exit (a_feature_name: READABLE_STRING_GENERAL)
 			-- Log exiting a feature (for call tracing).
 		require
 			feature_name_not_empty: not a_feature_name.is_empty
@@ -412,7 +412,7 @@ feature -- Tracing (Enter/Exit)
 			decrement_indent
 			create l_fields.make (1)
 			l_fields.put ("exit", "trace")
-			log_at_level (Level_debug, "<<< " + a_feature_name, l_fields)
+			log_at_level (Level_debug, "<<< " + a_feature_name.out, l_fields)
 		end
 
 feature -- Timing
@@ -426,7 +426,7 @@ feature -- Timing
 			timer_ready: Result.elapsed_ms >= 0
 		end
 
-	log_duration (a_timer: SIMPLE_LOG_TIMER; a_message: STRING)
+	log_duration (a_timer: SIMPLE_LOG_TIMER; a_message: READABLE_STRING_GENERAL)
 			-- Log info message with duration from timer.
 			-- (void-safe: attachment guaranteed by type system)
 		local
@@ -434,7 +434,7 @@ feature -- Timing
 		do
 			create l_fields.make (1)
 			l_fields.put (a_timer.elapsed_ms, "duration_ms")
-			log_at_level (Level_info, a_message, l_fields)
+			log_at_level (Level_info, a_message.out, l_fields)
 		end
 
 feature {SIMPLE_LOGGER} -- Implementation (shared with child loggers)
